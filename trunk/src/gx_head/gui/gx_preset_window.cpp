@@ -870,22 +870,35 @@ bool PresetWindow::download_file(Glib::ustring from_uri, Glib::ustring to_path) 
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
     curl_easy_setopt(curl, CURLOPT_URL, from_uri.c_str());
     res = curl_easy_perform(curl);
-    if(CURLE_OK == res) {
-        char *ct = NULL;
-        res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
-        if (strstr(ct, "application/json")!= NULL ) {
-            gx_print_info( "download_file", from_uri);
-        } else if (strstr(ct, "application/octet-stream")!= NULL) {
-             gx_print_info( "download_preset", from_uri);
+    if (CURLE_OK == res) {
+        long resp = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp);
+        if (resp < 200 || resp > 299) {
+            gx_print_error("download", Glib::ustring::compose("Fetching %1 failed with HTTP code %2", from_uri, resp));
+            curl_easy_reset(curl);
+            res = CURLE_HTTP_RETURNED_ERROR;
         } else {
-           res = CURLE_CONV_FAILED;
+            char *ct = NULL;
+            res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
+            if (ct == NULL) {
+                gx_print_error("download", Glib::ustring::compose("Fetching %1, but it doesn't have the content-type header set!", from_uri));
+                res = CURLE_CONV_FAILED;
+            } else if (strstr(ct, "application/json") != NULL) {
+                gx_print_info( "download_file", from_uri);
+            } else if (strstr(ct, "application/octet-stream") != NULL) {
+                 gx_print_info( "download_preset", from_uri);
+            } else {
+                gx_print_error("download", Glib::ustring::compose("Fetching %1 returned data in unexpected encoding \"%2\"", from_uri, ct));
+                res = CURLE_CONV_FAILED;
+            }
         }
+    } else {
+        gx_print_error( "download_file", Glib::ustring::compose("curl_easy_perform() for %1 failed: %2 (%3)", from_uri, curl_easy_strerror(res), (int)res) );
     }
     curl_easy_reset(curl);
     fclose(out);
-    if(res != CURLE_OK) {
+    if (res != CURLE_OK) {
         remove(to_path.c_str());
-        gx_print_error( "download_file", Glib::ustring::compose("curl_easy_perform() failed: %1", curl_easy_strerror(res)));
         return false;
     }
     return true;
