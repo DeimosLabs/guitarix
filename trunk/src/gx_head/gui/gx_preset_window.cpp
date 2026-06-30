@@ -23,6 +23,9 @@
 
 #include <guitarix.h>
 
+// useragent used for libcurl requests, e.g. "Guitarix/0.47.0"
+#define GX_USERAGENT "Guitarix/" GX_VERSION
+
 /****************************************************************
  * class PresetWindow
  *
@@ -782,6 +785,7 @@ bool PresetWindow::download_json_to_string(const std::string& url, std::string& 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_string);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, GX_USERAGENT);
 
     res = curl_easy_perform(curl);
 
@@ -869,6 +873,8 @@ bool PresetWindow::download_file(Glib::ustring from_uri, Glib::ustring to_path) 
   
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
     curl_easy_setopt(curl, CURLOPT_URL, from_uri.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, GX_USERAGENT);
+
     res = curl_easy_perform(curl);
     if (CURLE_OK == res) {
         long resp = 0;
