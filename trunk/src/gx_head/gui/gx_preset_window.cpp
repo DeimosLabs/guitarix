@@ -776,7 +776,7 @@ static size_t write_to_string(void *ptr, size_t size, size_t nmemb, void *userda
     return size * nmemb;
 }
 
-bool PresetWindow::download_to_string(const std::string& url, std::string& out) {
+bool PresetWindow::download_json_to_string(const std::string& url, std::string& out) {
     CURLcode res;
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -787,6 +787,27 @@ bool PresetWindow::download_to_string(const std::string& url, std::string& out) 
 
     if (res != CURLE_OK) {
         gx_print_error("download", curl_easy_strerror(res));
+        curl_easy_reset(curl);
+        return false;
+    }
+
+    long resp = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp);
+    if (resp < 200 || resp > 299) {
+        gx_print_error("download", Glib::ustring::compose("Fetching %1 returned code %2", url, resp));
+        curl_easy_reset(curl);
+        return false;
+    }
+
+    const char* ct = NULL;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
+    if (ct == NULL) {
+        // avoid calling strstr() with NULL argument, use something
+        // that makes sense in error message
+        ct = "(no content-type set)";
+    }
+    if (strstr(ct, "application/json") == NULL) {
+        gx_print_error("download", Glib::ustring::compose("Fetching %1 didn't return JSON data but \"%2\"", url, ct));
         curl_easy_reset(curl);
         return false;
     }
@@ -804,7 +825,7 @@ bool PresetWindow::download_all_metadata(const std::string& out_path) {
                         + std::to_string(page);
 
         std::string response;
-        if (!download_to_string(url, response)) {
+        if (!download_json_to_string(url, response)) {
             return false;
         }
 
