@@ -23,6 +23,9 @@
 
 #include <guitarix.h>
 
+// useragent used for libcurl requests, e.g. "Guitarix/0.47.0"
+#define GX_USERAGENT "Guitarix/" GX_VERSION
+
 /****************************************************************
  * class PresetWindow
  *
@@ -776,17 +779,39 @@ static size_t write_to_string(void *ptr, size_t size, size_t nmemb, void *userda
     return size * nmemb;
 }
 
-bool PresetWindow::download_to_string(const std::string& url, std::string& out) {
+bool PresetWindow::download_json_to_string(const std::string& url, std::string& out) {
     CURLcode res;
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_string);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, GX_USERAGENT);
 
     res = curl_easy_perform(curl);
 
     if (res != CURLE_OK) {
         gx_print_error("download", curl_easy_strerror(res));
+        curl_easy_reset(curl);
+        return false;
+    }
+
+    long resp = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp);
+    if (resp < 200 || resp > 299) {
+        gx_print_error("download", Glib::ustring::compose("Fetching %1 returned code %2", url, resp));
+        curl_easy_reset(curl);
+        return false;
+    }
+
+    const char* ct = NULL;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
+    if (ct == NULL) {
+        // avoid calling strstr() with NULL argument, use something
+        // that makes sense in error message
+        ct = "(no content-type set)";
+    }
+    if (strstr(ct, "application/json") == NULL) {
+        gx_print_error("download", Glib::ustring::compose("Fetching %1 didn't return JSON data but \"%2\"", url, ct));
         curl_easy_reset(curl);
         return false;
     }
@@ -804,7 +829,7 @@ bool PresetWindow::download_all_metadata(const std::string& out_path) {
                         + std::to_string(page);
 
         std::string response;
-        if (!download_to_string(url, response)) {
+        if (!download_json_to_string(url, response)) {
             return false;
         }
 
@@ -848,23 +873,38 @@ bool PresetWindow::download_file(Glib::ustring from_uri, Glib::ustring to_path) 
   
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
     curl_easy_setopt(curl, CURLOPT_URL, from_uri.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, GX_USERAGENT);
+
     res = curl_easy_perform(curl);
-    if(CURLE_OK == res) {
-        char *ct = NULL;
-        res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
-        if (strstr(ct, "application/json")!= NULL ) {
-            gx_print_info( "download_file", from_uri);
-        } else if (strstr(ct, "application/octet-stream")!= NULL) {
-             gx_print_info( "download_preset", from_uri);
+    if (CURLE_OK == res) {
+        long resp = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp);
+        if (resp < 200 || resp > 299) {
+            gx_print_error("download", Glib::ustring::compose("Fetching %1 failed with HTTP code %2", from_uri, resp));
+            curl_easy_reset(curl);
+            res = CURLE_HTTP_RETURNED_ERROR;
         } else {
-           res = CURLE_CONV_FAILED;
+            char *ct = NULL;
+            res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
+            if (ct == NULL) {
+                gx_print_error("download", Glib::ustring::compose("Fetching %1, but it doesn't have the content-type header set!", from_uri));
+                res = CURLE_CONV_FAILED;
+            } else if (strstr(ct, "application/json") != NULL) {
+                gx_print_info( "download_file", from_uri);
+            } else if (strstr(ct, "application/octet-stream") != NULL) {
+                 gx_print_info( "download_preset", from_uri);
+            } else {
+                gx_print_error("download", Glib::ustring::compose("Fetching %1 returned data in unexpected encoding \"%2\"", from_uri, ct));
+                res = CURLE_CONV_FAILED;
+            }
         }
+    } else {
+        gx_print_error( "download_file", Glib::ustring::compose("curl_easy_perform() for %1 failed: %2 (%3)", from_uri, curl_easy_strerror(res), (int)res) );
     }
     curl_easy_reset(curl);
     fclose(out);
-    if(res != CURLE_OK) {
+    if (res != CURLE_OK) {
         remove(to_path.c_str());
-        gx_print_error( "download_file", Glib::ustring::compose("curl_easy_perform() failed: %1", curl_easy_strerror(res)));
         return false;
     }
     return true;
